@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	certv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -401,4 +403,90 @@ func healthCheck(sts *appsv1.StatefulSet, lg klog.Logger) (*clientv3.MemberListR
 	}
 
 	return memberlistResp, healthInfos, nil
+}
+
+func reconcileCertificate(ctx context.Context, c client.Client, ec *ecv1alpha1.EtcdCluster, scheme *runtime.Scheme, logger logr.Logger) ([]*certv1.Certificate, error) {
+	var certificates []*certv1.Certificate
+
+	clientCertName := strings.Join([]string{ec.Name, ec.Spec.TLS.OperatorSecret}, "-")
+	logger.Info("Starting reconciliation of Client Certificate", clientCertName, ec.Namespace)
+	clientCert, clientCertErr := getCertificate(ctx, c, clientCertName, ec.Namespace)
+	if k8serrors.IsNotFound(clientCertErr) {
+		clientCert, clientCertErr = createCertificate(ctx, c, clientCertName, ec, scheme)
+		if clientCertErr != nil {
+			logger.Error(clientCertErr, "failed to create Client Certificate")
+		}
+	} else {
+		logger.Error(clientCertErr, "failed to get Client Certificate")
+	}
+
+	peerCertName := strings.Join([]string{ec.Name, ec.Spec.TLS.Member.PeerSecret}, "-")
+	logger.Info("Starting reconciliation of Peer Certificate", peerCertName, ec.Namespace)
+	peerCert, peerCertErr := getCertificate(ctx, c, peerCertName, ec.Namespace)
+	if k8serrors.IsNotFound(peerCertErr) {
+		peerCert, peerCertErr = createCertificate(ctx, c, peerCertName, ec, scheme)
+		if peerCertErr != nil {
+			logger.Error(peerCertErr, "failed to create Peer Certificate")
+		}
+	} else {
+		logger.Error(clientCertErr, "failed to get Peer Certificate")
+	}
+
+	serverCertName := strings.Join([]string{ec.Name, ec.Spec.TLS.Member.ServerSecret}, "-")
+	logger.Info("Starting reconciliation of Server Certificate", serverCertName, ec.Namespace)
+	serverCert, serverCertErr := getCertificate(ctx, c, serverCertName, ec.Namespace)
+	if k8serrors.IsNotFound(serverCertErr) {
+		serverCert, serverCertErr = createCertificate(ctx, c, serverCertName, ec, scheme)
+		if serverCertErr != nil {
+			logger.Error(serverCertErr, "failed to create Server Certificate")
+		}
+	} else {
+		logger.Error(clientCertErr, "failed to get Server Certificate")
+	}
+
+	certificates = append(certificates, clientCert, peerCert, serverCert)
+	for _, cert := range certificates {
+		if cert == nil {
+			return certificates, errors.New("failed to create one or more certificate")
+		}
+	}
+	return certificates, nil
+}
+
+func getCertificate(ctx context.Context, c client.Client, tlsCertName, namespace string) (*certv1.Certificate, error) {
+	foundCert := &certv1.Certificate{}
+
+	err := c.Get(ctx, client.ObjectKey{Name: tlsCertName, Namespace: namespace}, foundCert)
+	if err != nil {
+		return nil, err
+	}
+	return foundCert, nil
+}
+
+func createCertificate(ctx context.Context, c client.Client, tlsCertName string, ec *ecv1alpha1.EtcdCluster, scheme *runtime.Scheme) (*certv1.Certificate, error) {
+	owners, ownersErr := prepareOwnerReference(ec, scheme)
+	if ownersErr != nil {
+		return nil, ownersErr
+	}
+	certificateResource := &certv1.Certificate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            tlsCertName,
+			Namespace:       ec.Namespace,
+			OwnerReferences: owners,
+		},
+		Spec: certv1.CertificateSpec{
+			SecretName: tlsCertName,
+			DNSNames:   []string{CertDNSNames},
+			IssuerRef: cmmeta.ObjectReference{
+				Name: CertClusterIssuerName,
+				Kind: "ClusterIssuer",
+			},
+		},
+	}
+
+	err := c.Create(ctx, certificateResource)
+	if err != nil {
+		return nil, err
+	}
+	return certificateResource, nil
 }

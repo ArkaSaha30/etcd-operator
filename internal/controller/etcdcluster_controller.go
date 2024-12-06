@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	certv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -53,6 +54,7 @@ type EtcdClusterReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch;get;list;update
+// +kubebuilder:rbac:groups="cert-manager.io",resources=certificates,verbs=create;get;list;update;delete;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -86,6 +88,14 @@ func (r *EtcdClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// TODO: Implement finalizer logic here
 
 	logger.Info("Reconciling EtcdCluster", "spec", etcdCluster.Spec)
+
+	logger.Info("Reconciling EtcdCluster certificates", "tls", etcdCluster.Spec.TLS)
+	certificates, err := reconcileCertificate(ctx, r.Client, etcdCluster, r.Scheme, logger)
+	if err != nil {
+		logger.Error(err, "failed to reconcile EtcdCluster certificates")
+	} else {
+		logger.Info("Successfully reconciled EtcdCluster certificates", "tls", certificates)
+	}
 
 	// Get the statefulsets which has the same name as the EtcdCluster resource
 	sts, err := getStatefulSet(ctx, r.Client, etcdCluster.Name, etcdCluster.Namespace)
@@ -259,5 +269,6 @@ func (r *EtcdClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
+		Owns(&certv1.Certificate{}).
 		Complete(r)
 }
