@@ -89,12 +89,12 @@ func (r *EtcdClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	logger.Info("Reconciling EtcdCluster", "spec", etcdCluster.Spec)
 
-	logger.Info("Reconciling EtcdCluster certificates", "tls", etcdCluster.Spec.TLS)
-	certificates, err := reconcileCertificate(ctx, r.Client, etcdCluster, r.Scheme, logger)
+	logger.Info("Reconciling EtcdCluster Server certificates", "tls", etcdCluster.Spec.TLS)
+	certificates, err := reconcileServerCertificate(ctx, r.Client, etcdCluster, r.Scheme, logger)
 	if err != nil {
-		logger.Error(err, "failed to reconcile EtcdCluster certificates")
+		logger.Error(err, "failed to reconcile EtcdCluster Server certificates")
 	} else {
-		logger.Info("Successfully reconciled EtcdCluster certificates", "tls", certificates)
+		logger.Info("Successfully reconciled EtcdCluster Server certificates", "tls", certificates)
 	}
 
 	// Get the statefulsets which has the same name as the EtcdCluster resource

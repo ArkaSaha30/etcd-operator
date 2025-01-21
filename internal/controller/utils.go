@@ -405,7 +405,7 @@ func healthCheck(sts *appsv1.StatefulSet, lg klog.Logger) (*clientv3.MemberListR
 	return memberlistResp, healthInfos, nil
 }
 
-func reconcileCertificate(ctx context.Context, c client.Client, ec *ecv1alpha1.EtcdCluster, scheme *runtime.Scheme, logger logr.Logger) ([]*certv1.Certificate, error) {
+func reconcileMemberCertificate(ctx context.Context, c client.Client, ec *ecv1alpha1.EtcdCluster, scheme *runtime.Scheme, logger logr.Logger) ([]*certv1.Certificate, error) {
 	var certificates []*certv1.Certificate
 
 	clientCertName := strings.Join([]string{ec.Name, ec.Spec.TLS.OperatorSecret}, "-")
@@ -432,6 +432,17 @@ func reconcileCertificate(ctx context.Context, c client.Client, ec *ecv1alpha1.E
 		logger.Error(clientCertErr, "failed to get Peer Certificate")
 	}
 
+	certificates = append(certificates, clientCert, peerCert)
+	for _, cert := range certificates {
+		if cert == nil {
+			return certificates, errors.New("failed to create one or more certificate")
+		}
+	}
+	return certificates, nil
+}
+
+func reconcileServerCertificate(ctx context.Context, c client.Client, ec *ecv1alpha1.EtcdCluster, scheme *runtime.Scheme, logger logr.Logger) (*certv1.Certificate, error) {
+
 	serverCertName := strings.Join([]string{ec.Name, ec.Spec.TLS.Member.ServerSecret}, "-")
 	logger.Info("Starting reconciliation of Server Certificate", serverCertName, ec.Namespace)
 	serverCert, serverCertErr := getCertificate(ctx, c, serverCertName, ec.Namespace)
@@ -439,18 +450,14 @@ func reconcileCertificate(ctx context.Context, c client.Client, ec *ecv1alpha1.E
 		serverCert, serverCertErr = createCertificate(ctx, c, serverCertName, ec, scheme)
 		if serverCertErr != nil {
 			logger.Error(serverCertErr, "failed to create Server Certificate")
+			return nil, serverCertErr
 		}
 	} else {
-		logger.Error(clientCertErr, "failed to get Server Certificate")
+		logger.Error(serverCertErr, "failed to get Server Certificate")
+		return nil, serverCertErr
 	}
 
-	certificates = append(certificates, clientCert, peerCert, serverCert)
-	for _, cert := range certificates {
-		if cert == nil {
-			return certificates, errors.New("failed to create one or more certificate")
-		}
-	}
-	return certificates, nil
+	return serverCert, nil
 }
 
 func getCertificate(ctx context.Context, c client.Client, tlsCertName, namespace string) (*certv1.Certificate, error) {
@@ -476,7 +483,7 @@ func createCertificate(ctx context.Context, c client.Client, tlsCertName string,
 		},
 		Spec: certv1.CertificateSpec{
 			SecretName: tlsCertName,
-			DNSNames:   []string{CertDNSNames},
+			DNSNames:   []string{fmt.Sprintf("%s-%d.%s.%s.svc.cluster.local", ec.Name, ec.Spec.Size, ec.Name, ec.Namespace)},
 			IssuerRef: cmmeta.ObjectReference{
 				Name: CertClusterIssuerName,
 				Kind: "ClusterIssuer",
