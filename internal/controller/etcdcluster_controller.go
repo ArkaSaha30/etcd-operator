@@ -31,6 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	cmv1 "go.etcd.io/etcd-operator/internal/certificate"
+
 	ecv1alpha1 "go.etcd.io/etcd-operator/api/v1alpha1"
 	"go.etcd.io/etcd-operator/internal/etcdutils"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -89,12 +91,22 @@ func (r *EtcdClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	logger.Info("Reconciling EtcdCluster", "spec", etcdCluster.Spec)
 
-	logger.Info("Reconciling EtcdCluster Server certificates", "tls", etcdCluster.Spec.TLS)
-	certificates, err := reconcileServerCertificate(ctx, r.Client, etcdCluster, r.Scheme, logger)
+	etcdCertManager := cmv1.NewCertificateManager{Ctx: ctx, Client: r.Client, Scheme: r.Scheme, EtcdCluster: etcdCluster}
+	logger.Info("Reconciling EtcdCluster Server certificate", "tls", etcdCluster.Spec.TLS)
+	serverCertificate, err := cmv1.ReconcileServerCertificate(etcdCertManager)
 	if err != nil {
-		logger.Error(err, "failed to reconcile EtcdCluster Server certificates")
+		logger.Error(err, "failed to reconcile EtcdCluster Server certificate")
 	} else {
-		logger.Info("Successfully reconciled EtcdCluster Server certificates", "tls", certificates)
+		logger.Info("Successfully reconciled EtcdCluster Server certificate", "tls", serverCertificate)
+	}
+
+	// needs to be reconciled along with member creation
+	logger.Info("Reconciling EtcdCluster Member certificates", "tls", etcdCluster.Spec.TLS)
+	memberCertificates, err := cmv1.ReconcileMemberCertificate(etcdCertManager)
+	if err != nil {
+		logger.Error(err, "failed to reconcile EtcdCluster Member certificates")
+	} else {
+		logger.Info("Successfully reconciled EtcdCluster member certificates", "tls", memberCertificates)
 	}
 
 	// Get the statefulsets which has the same name as the EtcdCluster resource
