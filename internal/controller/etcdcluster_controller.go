@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	certv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -30,9 +31,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
+
 	ecv1alpha1 "go.etcd.io/etcd-operator/api/v1alpha1"
 	"go.etcd.io/etcd-operator/internal/etcdutils"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const (
@@ -53,6 +55,9 @@ type EtcdClusterReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch;get;list;update
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=create;get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=create;get;list;update;delete;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -76,6 +81,14 @@ func (r *EtcdClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	// Create Client Certificate for etcd-operator to communicate with the etcdCluster
+	clientCertErr := r.checkClientCertificate(etcdCluster, ctx)
+	logger.Info("Creating Client Certificate for etcd-operator to communicate with the etcdCluster")
+	if clientCertErr != nil {
+		logger.Info("Error creating Client Certificate")
+		return ctrl.Result{}, clientCertErr
 	}
 
 	if etcdCluster.Spec.Size == 0 {
@@ -208,6 +221,13 @@ func (r *EtcdClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
+	logger.Info("Creating Server and Peer Certificate")
+	createServerPeerCertErr := r.checkServerPeerCertificate(etcdCluster, sts, ctx)
+	if createServerPeerCertErr != nil {
+		logger.Info("Error creating Server and Peer Certificate")
+		return ctrl.Result{}, createServerPeerCertErr
+	}
+
 	eps := clientEndpointsFromStatefulsets(sts)
 
 	// If there is no more learner, then we can proceed to scale the cluster further.
@@ -265,5 +285,6 @@ func (r *EtcdClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
+		Owns(&certv1.Certificate{}).
 		Complete(r)
 }
