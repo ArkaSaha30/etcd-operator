@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	certv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsV1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -29,7 +28,7 @@ import (
 const (
 	autoCertificateName      = "sample-cert"
 	autoCertificateNamespace = "default"
-	autoCertificateValidity  = auto.DefaultValidity
+	autoCertificateValidity  = interfaces.DefaultAutoValidity
 )
 
 func TestAutoProvider(t *testing.T) {
@@ -45,7 +44,6 @@ func TestAutoProvider(t *testing.T) {
 			client := cfg.Client()
 			_ = appsv1.AddToScheme(client.Resources().GetScheme())
 			_ = corev1.AddToScheme(client.Resources().GetScheme())
-			_ = certv1.AddToScheme(client.Resources().GetScheme())
 			_ = apiextensionsV1.AddToScheme(client.Resources().GetScheme())
 
 			return ctx
@@ -157,7 +155,6 @@ func TestClusterAutoCertCreation(t *testing.T) {
 		client := cfg.Client()
 		_ = appsv1.AddToScheme(client.Resources().GetScheme())
 		_ = corev1.AddToScheme(client.Resources().GetScheme())
-		_ = certv1.AddToScheme(client.Resources().GetScheme())
 		_ = apiextensionsV1.AddToScheme(client.Resources().GetScheme())
 
 		// create etcd cluster
