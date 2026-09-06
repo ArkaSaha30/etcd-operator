@@ -17,7 +17,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
@@ -26,7 +25,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -102,7 +100,7 @@ func (r *EtcdClusterReconciler) markMemberTerminating(ctx context.Context, membe
 // best-effort MoveLeader ahead of RemoveMember, which should be added
 // in a follow-up (failure must not stop the sequence).
 func (r *EtcdClusterReconciler) cleanupEtcdMember(ctx context.Context, s *reconcileState, member *ecv1alpha1.EtcdMember) (ctrl.Result, error) {
-	if err := removeEtcNode(s, member); err != nil {
+	if err := removeEtcdNode(s, member); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -116,35 +114,31 @@ func (r *EtcdClusterReconciler) cleanupEtcdMember(ctx context.Context, s *reconc
 	return ctrl.Result{RequeueAfter: requeueDuration}, nil
 }
 
-// removeEtcNode removes the member from etcd's live membership,
-// identified by matching the reconcile snapshot's MemberList against the
-// member's deterministic peer URL (never Status.MemberID). No-op when the
-// membership snapshot is absent (etcd unreachable — the #463 recovery path)
-// or when the member no longer appears in the membership (already removed).
-func removeEtcNode(s *reconcileState, member *ecv1alpha1.EtcdMember) error {
+// removeEtcdNode removes the member from etcd's live membership, correlating
+// it against the reconcile snapshot's MemberList with findEtcdNodeForEtcdMember
+// (never Status.MemberID). No-op when the membership snapshot is absent (etcd
+// unreachable — the #463 recovery path) or when the member no longer appears
+// in the membership (already removed).
+func removeEtcdNode(s *reconcileState, member *ecv1alpha1.EtcdMember) error {
 	if s.memberListResp == nil {
 		return nil
 	}
 
-	_, peerURL := peerEndpointForOrdinalIndex(s.cluster, member.Spec.Ordinal)
-	var nodeID uint64
-	for _, m := range s.memberListResp.Members {
-		if slices.Contains(m.PeerURLs, peerURL) {
-			nodeID = m.ID
-			break
-		}
-	}
-	if nodeID == 0 {
+	etcdNode := findEtcdNodeForEtcdMember(s, member)
+	if etcdNode == nil {
 		return nil // already removed from the membership
 	}
 
 	endpoints := clientEndpointsFromPods(s.cluster.Name, s.cluster.Namespace, s.pods, clusterTLSEnabled(s.cluster))
 	cfg := etcdutils.ClientConfig{Endpoints: endpoints, TLS: s.tlsConfig}
-	return etcdutils.RemoveMember(cfg, nodeID)
+	if err := etcdutils.RemoveMember(cfg, etcdNode.ID); err != nil {
+		return fmt.Errorf("failed to remove the etcd node for EtcdMember %q: %w", member.Name, err)
+	}
+	return nil
 }
 
 // cleanupMemberResources deletes the member's owned Pod and PVC. The Pod is
-// found in this reconcile's snapshot; the PVC is fetched live by its
+// found in this reconcile's snapshot; the PVC is addressed directly by its
 // deterministic name. Kubernetes' pvc-protection finalizer holds the PVC
 // until the Pod is actually gone, so deleting both in one pass is safe.
 // Either resource already being gone is not an error.
@@ -162,14 +156,12 @@ func cleanupMemberResources(ctx context.Context, c client.Client, s *reconcileSt
 		break
 	}
 
-	pvc := &corev1.PersistentVolumeClaim{}
-	switch err := c.Get(ctx, types.NamespacedName{Namespace: s.cluster.Namespace, Name: pvcName}, pvc); {
-	case err == nil:
-		if delErr := c.Delete(ctx, pvc); delErr != nil && !apierrors.IsNotFound(delErr) {
-			return fmt.Errorf("deleting PVC for EtcdMember %q: %w", member.Name, delErr)
-		}
-	case !apierrors.IsNotFound(err):
-		return fmt.Errorf("getting PVC for EtcdMember %q: %w", member.Name, err)
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+		Name:      pvcName,
+		Namespace: s.cluster.Namespace,
+	}}
+	if err := c.Delete(ctx, pvc); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting PVC for EtcdMember %q: %w", member.Name, err)
 	}
 
 	return nil

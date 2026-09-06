@@ -266,7 +266,7 @@ func TestPickMemberToUpgrade(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Terminating cleanup (§4.6): cleanupEtcdMember / removeEtcNode /
+// Terminating cleanup (§4.6): cleanupEtcdMember / removeEtcdNode /
 // cleanupMemberResources
 // ---------------------------------------------------------------------------
 
@@ -359,12 +359,12 @@ func TestCleanupMemberResources(t *testing.T) {
 	})
 }
 
-func TestRemoveEtcNode(t *testing.T) {
+func TestRemoveEtcdNode(t *testing.T) {
 	_, peerURL2 := peerEndpointForOrdinalIndex(leaveTestCluster(), 2)
 
 	t.Run("No membership snapshot — no-op when etcd is unreachable", func(t *testing.T) {
 		state := &reconcileState{cluster: leaveTestCluster(), memberListResp: nil}
-		assert.NoError(t, removeEtcNode(state, leaveTestMember(2)),
+		assert.NoError(t, removeEtcdNode(state, leaveTestMember(2)),
 			"absent snapshot means no membership to amend — the #463 degradation")
 	})
 
@@ -375,7 +375,7 @@ func TestRemoveEtcNode(t *testing.T) {
 				{ID: 100, Name: "etcd-0", PeerURLs: []string{"http://etcd-0:2380"}},
 			}},
 		}
-		assert.NoError(t, removeEtcNode(state, leaveTestMember(2)),
+		assert.NoError(t, removeEtcdNode(state, leaveTestMember(2)),
 			"already-removed (or never-registered) must not trigger a RemoveMember dial")
 	})
 
